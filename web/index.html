@@ -88,10 +88,10 @@ async function buy(id){
   try {
     if (!window.ethereum) throw new Error("MetaMask not detected");
     if (typeof ethers === "undefined") throw new Error("ethers.js failed to load - check connection");
-    await ensureAevum();
+    const acc = await connectWallet();
+    if (!acc) throw new Error("no account connected");
     const browserProvider = new ethers.BrowserProvider(window.ethereum);
     const signer = await browserProvider.getSigner();
-    const [acc] = await signer.getAddress().then(a => [a]);
     const router = new ethers.Contract(ROUTER, ABI, signer);
     const token  = new ethers.Contract(TUSD8, TOKEN_ABI, signer);
     const price = (await router.products(id)).price;
@@ -109,13 +109,20 @@ async function buy(id){
     status.innerHTML = '<span class="err">' + (e.shortMessage || e.message) + '</span>';
   }
 }
-document.getElementById("connect").addEventListener("click", async () => {
-  if (!window.ethereum){ document.getElementById("status").textContent = "MetaMask not detected."; return; }
-  const mm = new ethers.BrowserProvider(window.ethereum);
-  const acc = await (await mm.getSigner()).getAddress();
-  document.getElementById("addr").textContent = acc.slice(0,6) + "…" + acc.slice(-4);
+async function connectWallet(){
+  if (!window.ethereum){ document.getElementById("status").textContent = "MetaMask not detected."; return null; }
+  let accounts;
+  try { accounts = await window.ethereum.request({method:"eth_requestAccounts"}); }
+  catch(e){ document.getElementById("status").innerHTML = '<span class="err">' + (e.message||e) + '</span>'; return null; }
+  if (!accounts || accounts.length === 0){ document.getElementById("status").innerHTML = '<span class="err">Wallet has no account — unlock MetaMask or create/import one.</span>'; return null; }
   await ensureAevum();
-});
+  const p = new ethers.BrowserProvider(window.ethereum);
+  const acc = await p.getSigner().then(s => s.getAddress()).catch(() => accounts[0]);
+  document.getElementById("addr").textContent = String(acc).slice(0,6) + "…" + String(acc).slice(-4);
+  return acc;
+}
+document.getElementById("connect").addEventListener("click", () => connectWallet());
+window.ethereum?.on?.("accountsChanged", () => connectWallet());
 loadProducts();
 </script>
 </body>
