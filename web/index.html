@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Xynaptic Store on QDay Aevum</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; background:#0b1020; color:#e7ecf5; margin:0 auto; padding:2rem; max-width:820px; }
+  h1 { font-size:1.5rem; } .sub { color:#8fa0bd; margin-bottom:2rem; }
+  .card { background:#141b2e; border:1px solid #263352; border-radius:12px; padding:1rem 1.2rem; margin-bottom:1rem; display:flex; justify-content:space-between; align-items:center; gap:1rem; }
+  .name { font-weight:600; } .price { color:#6ee7a8; white-space:nowrap; }
+  button { background:#2f6fed; color:#fff; border:none; border-radius:8px; padding:.55rem 1.1rem; cursor:pointer; font-size:.95rem; }
+  button.ghost { background:transparent; border:1px solid #3a4560; }
+  #status { margin-top:1rem; color:#8fa0bd; min-height:1.5em; word-break:break-all; }
+  .ok { color:#6ee7a8; } .err { color:#ff7b7b; }
+  footer { margin-top:3rem; color:#5b6a88; font-size:.85rem; }
+  code { color:#9db4d8; }
+</style>
+</head>
+<body>
+<h1>🛍️ Xynaptic Store — QDay Aevum Testnet</h1>
+<p class="sub">Top-selling Xynaptic data services, paid in tUSD8 on-chain via PaymentRouter. Chain 44005 · contract <code>0x883bC4F7a60aae4C51aF8cb57E43eb2ea6A1B263</code></p>
+<div><button class="ghost" id="connect">Connect MetaMask</button> <span id="addr"></span></div>
+<div id="products" style="margin-top:1.5rem"></div>
+<div id="status"></div>
+<footer>Prices mirror live Xynaptic x402 pricing (USDC → tUSD8 1:1). Reads come straight from the contract — no backend, no login. QDay hackathon demo (Aevum testnet, test tokens only).</footer>
+<script src="https://cdn.ethers.io/lib/ethers-6.13.umd.min.js"></script>
+<script>
+const ROUTER = "0x883bC4F7a60aae4C51aF8cb57E43eb2ea6A1B263";
+const TUSD8  = "0x456569838f1d43009a91eba4263147afd7233483";
+const RPC = "https://rpc-test.qday.info";
+const PRODUCT_IDS = [1,2,3,4,5];
+const ABI = [
+  "function products(uint256) view returns (uint128 price, bool active, string name)",
+  "function pay(uint256 productId, bytes32 txHash)",
+  "function settledTx(bytes32) view returns (bool)"
+];
+const TOKEN_ABI = ["function approve(address,uint256) returns (bool)"];
+let provider = new ethers.JsonRpcProvider(RPC);
+const routerRead = new ethers.Contract(ROUTER, ABI, provider);
+
+const fmt = (p) => { const n = Number(p)/1e6; return (n % 1 === 0 ? n.toString() : n.toFixed(2)) + " tUSD8"; };
+
+async function loadProducts(){
+  const box = document.getElementById("products");
+  box.innerHTML = "<p>Loading products from chain…</p>";
+  let html = "";
+  for (const id of PRODUCT_IDS){
+    try {
+      const [price, active, name] = await routerRead.products(id);
+      if (!active) continue;
+      html += '<div class="card"><div><div class="name">' + name + '</div><div class="sub">product #' + id + '</div></div>'
+            + '<div><span class="price">' + fmt(price) + '</span> <button class="buy" data-id="' + id + '">Buy</button> <span class="st" id="st' + id + '"></span></div></div>';
+    } catch(e){ console.warn(id, e); }
+  }
+  box.innerHTML = html || "<p>No products found.</p>";
+  box.querySelectorAll(".buy").forEach(b => b.addEventListener("click", () => buy(+b.dataset.id)));
+}
+async function ensureAevum(){
+  const mm = window.ethereum;
+  const cid = await mm.request({method:"eth_chainId"});
+  if (BigInt(cid) !== 44005n){
+    try { await mm.request({method:"wallet_switchEthereumChain", params:[{chainId:"0xabe5"}]}); }
+    catch(e){ await mm.request({method:"wallet_addEthereumChain", params:[{
+      chainId:"0xabe5", chainName:"QDay Aevum Testnet",
+      nativeCurrency:{name:"QDAY", symbol:"QDAY", decimals:18},
+      rpcUrls:[RPC], blockExplorerUrls:["https://explorer-test.qday.info"]}]});
+    }
+  }
+}
+async function waitTx(hash, label){
+  const p = new ethers.JsonRpcProvider(RPC);
+  const st = document.getElementById("status");
+  for (let i = 0; i < 120; i++){
+    const r = await p.getTransactionReceipt(hash).catch(() => null);
+    if (r){
+      if (r.status === 1) return r;
+      throw new Error(label + " tx reverted: " + hash);
+    }
+    await new Promise(res => setTimeout(res, 2000));
+  }
+  throw new Error("timeout waiting for " + label + " tx");
+}
+async function buy(id){
+  const st = document.getElementById("st" + id);
+  const status = document.getElementById("status");
+  try {
+    if (!window.ethereum) throw new Error("MetaMask not detected");
+    await ensureAevum();
+    const browserProvider = new ethers.BrowserProvider(window.ethereum);
+    const signer = await browserProvider.getSigner();
+    const [acc] = await signer.getAddress().then(a => [a]);
+    const router = new ethers.Contract(ROUTER, ABI, signer);
+    const token  = new ethers.Contract(TUSD8, TOKEN_ABI, signer);
+    const price = (await router.products(id)).price;
+    status.textContent = "Step 1/2 — approve tUSD8 spend (" + fmt(price) + ")…";
+    const a1 = await token.approve(ROUTER, price);
+    status.textContent = "Waiting approval " + a1.hash.slice(0,10) + "…";
+    await waitTx(a1.hash, "approval");
+    status.textContent = "Step 2/2 — paying product #" + id + "…";
+    const ctxHash = ethers.id("xynaptic-store:" + id + ":" + acc.toLowerCase() + ":" + Date.now());
+    const tx = await router.pay(id, ctxHash);
+    status.textContent = "Waiting payment " + tx.hash.slice(0,10) + "…";
+    const rec = await waitTx(tx.hash, "payment");
+    if (rec) { st.textContent = "✅ paid"; st.className = "price ok"; status.innerHTML = '<span class="ok">Paid! tx: ' + tx.hash + '</span>'; }
+  } catch(e){
+    status.innerHTML = '<span class="err">' + (e.shortMessage || e.message) + '</span>';
+  }
+}
+document.getElementById("connect").addEventListener("click", async () => {
+  if (!window.ethereum){ document.getElementById("status").textContent = "MetaMask not detected."; return; }
+  const mm = new ethers.BrowserProvider(window.ethereum);
+  const acc = await (await mm.getSigner()).getAddress();
+  document.getElementById("addr").textContent = acc.slice(0,6) + "…" + acc.slice(-4);
+  await ensureAevum();
+});
+loadProducts();
+</script>
+</body>
+</html>
