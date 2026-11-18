@@ -25,7 +25,7 @@
 <div id="products" style="margin-top:1.5rem"></div>
 <div id="status"></div>
 <footer>Prices mirror live Xynaptic x402 pricing (USDC → tUSD8 1:1). Reads come straight from the contract — no backend, no login. QDay hackathon demo (Aevum testnet, test tokens only).</footer>
-<script src="https://cdn.ethers.io/lib/ethers-6.13.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
 <script>
 const ROUTER = "0x883bC4F7a60aae4C51aF8cb57E43eb2ea6A1B263";
 const TUSD8  = "0x456569838f1d43009a91eba4263147afd7233483";
@@ -87,6 +87,7 @@ async function buy(id){
   const status = document.getElementById("status");
   try {
     if (!window.ethereum) throw new Error("MetaMask not detected");
+    if (typeof ethers === "undefined") throw new Error("ethers.js failed to load - check connection");
     await ensureAevum();
     const browserProvider = new ethers.BrowserProvider(window.ethereum);
     const signer = await browserProvider.getSigner();
