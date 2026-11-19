@@ -86,11 +86,11 @@ async function buy(id){
   const st = document.getElementById("st" + id);
   const status = document.getElementById("status");
   try {
-    if (!window.ethereum) throw new Error("MetaMask not detected");
+    const eth = getEth(); if (!eth) throw new Error("MetaMask not detected");
     if (typeof ethers === "undefined") throw new Error("ethers.js failed to load - check connection");
     const acc = await connectWallet();
     if (!acc) throw new Error("no account connected");
-    const browserProvider = new ethers.BrowserProvider(window.ethereum);
+    const browserProvider = new ethers.BrowserProvider(eth);
     const signer = await browserProvider.getSigner();
     const router = new ethers.Contract(ROUTER, ABI, signer);
     const token  = new ethers.Contract(TUSD8, TOKEN_ABI, signer);
@@ -109,14 +109,28 @@ async function buy(id){
     status.innerHTML = '<span class="err">' + (e.shortMessage || e.message) + '</span>';
   }
 }
+function getEth(){
+  const ps = window.ethereum && window.ethereum.providers ? window.ethereum.providers : (window.ethereum ? [window.ethereum] : []);
+  return ps.find(p => p.isMetaMask) || window.ethereum;
+}
 async function connectWallet(){
-  if (!window.ethereum){ document.getElementById("status").textContent = "MetaMask not detected."; return null; }
-  let accounts;
-  try { accounts = await window.ethereum.request({method:"eth_requestAccounts"}); }
-  catch(e){ document.getElementById("status").innerHTML = '<span class="err">' + (e.message||e) + '</span>'; return null; }
+  const eth = getEth();
+  if (!eth){ document.getElementById("status").textContent = "MetaMask not detected."; return null; }
+  let accounts = null;
+  for (let i = 0; i < 3; i++){
+    try { accounts = await eth.request({method:"eth_requestAccounts"}); }
+    catch(e){
+      // locked wallet or concurrent request: wait and retry
+      if (i === 2){ document.getElementById("status").innerHTML = '<span class="err">' + ((e.message||e) + " — unlock MetaMask and retry") + '</span>'; return null; }
+      await new Promise(r => setTimeout(r, 600));
+      continue;
+    }
+    if (accounts && accounts.length > 0) break;
+    if (i < 2){ await new Promise(r => setTimeout(r, 600)); }
+  }
   if (!accounts || accounts.length === 0){ document.getElementById("status").innerHTML = '<span class="err">Wallet has no account — unlock MetaMask or create/import one.</span>'; return null; }
   await ensureAevum();
-  const p = new ethers.BrowserProvider(window.ethereum);
+  const p = new ethers.BrowserProvider(eth);
   const acc = await p.getSigner().then(s => s.getAddress()).catch(() => accounts[0]);
   document.getElementById("addr").textContent = String(acc).slice(0,6) + "…" + String(acc).slice(-4);
   return acc;
