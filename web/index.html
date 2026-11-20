@@ -36,7 +36,11 @@ const ABI = [
   "function pay(uint256 productId, bytes32 txHash)",
   "function settledTx(bytes32) view returns (bool)"
 ];
-const TOKEN_ABI = ["function approve(address,uint256) returns (bool)"];
+const TOKEN_ABI = [
+  "function approve(address,uint256) returns (bool)",
+  "function allowance(address,address) view returns (uint256)",
+  "function balanceOf(address) view returns (uint256)"
+];
 let provider = new ethers.JsonRpcProvider(RPC);
 const routerRead = new ethers.Contract(ROUTER, ABI, provider);
 
@@ -85,6 +89,7 @@ async function waitTx(hash, label){
 async function buy(id){
   const st = document.getElementById("st" + id);
   const status = document.getElementById("status");
+  const say = (html, cls) => { status.innerHTML = '<span class="' + (cls||"") + '">' + html + '</span>'; };
   try {
     const eth = getEth(); if (!eth) throw new Error("MetaMask not detected");
     if (typeof ethers === "undefined") throw new Error("ethers.js failed to load - check connection");
@@ -94,19 +99,38 @@ async function buy(id){
     const signer = await browserProvider.getSigner();
     const router = new ethers.Contract(ROUTER, ABI, signer);
     const token  = new ethers.Contract(TUSD8, TOKEN_ABI, signer);
+
     const price = (await router.products(id)).price;
-    status.textContent = "Step 1/2 — approve tUSD8 spend (" + fmt(price) + ")…";
-    const a1 = await token.approve(ROUTER, price);
-    status.textContent = "Waiting approval " + a1.hash.slice(0,10) + "…";
-    await waitTx(a1.hash, "approval");
-    status.textContent = "Step 2/2 — paying product #" + id + "…";
+    const bal = await token.balanceOf(acc);
+    if (bal < price) throw new Error("solde insuffisant : " + fmt(bal) + " pour un prix de " + fmt(price));
+
+    let allowance = await token.allowance(acc, ROUTER);
+    if (allowance < price){
+      say("Étape 1/2 — autorisation tUSD8 (" + fmt(price) + ")… ouvre MetaMask et confirme.");
+      const a1 = await token.approve(ROUTER, price);
+      say("Autorisation envoyée " + a1.hash.slice(0,10) + "… attente de confirmation.");
+      await waitTx(a1.hash, "approval");
+      allowance = await token.allowance(acc, ROUTER);
+      if (allowance < price) throw new Error("autorisation non enregistrée, réessaie");
+    } else {
+      say("Autorisation déjà en place — on passe au paiement.");
+    }
+
+    say("Étape 2/2 — paiement produit #" + id + " (" + fmt(price) + ")… confirme dans MetaMask.");
     const ctxHash = ethers.id("xynaptic-store:" + id + ":" + acc.toLowerCase() + ":" + Date.now());
     const tx = await router.pay(id, ctxHash);
-    status.textContent = "Waiting payment " + tx.hash.slice(0,10) + "…";
+    say("Paiement envoyé " + tx.hash.slice(0,10) + "… attente de confirmation.");
     const rec = await waitTx(tx.hash, "payment");
-    if (rec) { st.textContent = "✅ paid"; st.className = "price ok"; status.innerHTML = '<span class="ok">Paid! tx: ' + tx.hash + '</span>'; }
+    if (rec){
+      st.textContent = "✅ payé";
+      st.className = "price ok";
+      say('Payé ! tx : <a href="https://explorer-test.qday.info/tx/' + tx.hash + '" target="_blank" rel="noreferrer">' + tx.hash.slice(0,18) + '…</a>', "ok");
+    }
   } catch(e){
-    status.innerHTML = '<span class="err">' + (e.shortMessage || e.message) + '</span>';
+    const msg = (e && (e.shortMessage || e.message)) || String(e);
+    if (/user rejected|ACTION_REJECTED|4001/i.test(msg)) say("Transaction annulée dans MetaMask.", "err");
+    else if (/insufficient funds/i.test(msg)) say("Pas assez de tQDAY pour le gas.", "err");
+    else say(msg, "err");
   }
 }
 function getProviders(){
