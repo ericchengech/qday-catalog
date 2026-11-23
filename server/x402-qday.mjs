@@ -126,7 +126,7 @@ const serveur = createServer(async (req, res) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ paymentRequirements: terms, paymentPayload: paiement }),
-      signal: AbortSignal.timeout(45000),
+      signal: AbortSignal.timeout(150000),
     });
     const reglement = await r.json().catch(() => ({}));
     if (!reglement || reglement.success !== true) {
