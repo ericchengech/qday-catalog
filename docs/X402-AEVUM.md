@@ -171,76 +171,79 @@ it back as base64 JSON in `X-PAYMENT`, and receives the content plus a receipt h
 
 ---
 
-# Journal des tests — 23 novembre 2026
 
-Tout ce qui suit a été exécuté sur le testnet Aevum (chain `44005`), avec des jetons de test.
-Rien ne concerne le mainnet.
+---
 
-## Déploiement
+# Test log — 23 November 2026
 
-| Composant | URL | Port local |
+Everything below ran on the Aevum testnet (chain `44005`) with test tokens. Nothing here
+touches mainnet.
+
+## Deployment
+
+| Component | URL | Local port |
 |---|---|---|
-| Vitrine + catalogue + ressource x402 | `https://qday-catalog.xynaptic.io` | `8410` |
-| Facilitateur dédié QDay | `https://qday-facilitator.xynaptic.io` | `8403` |
+| Storefront, catalog and x402 resource server | `https://qday-catalog.xynaptic.io` | `8410` |
+| Dedicated QDay facilitator | `https://qday-facilitator.xynaptic.io` | `8403` |
 
-TLS Let's Encrypt sur les deux noms, derrière le proxy Cloudflare (mode Full).
-Vérification : `/health` renvoie 200 sur les deux domaines.
+Both names use Let's Encrypt TLS and sit behind the Cloudflare proxy (Full mode).
+Verified: `/health` returns 200 on both domains.
 
-## Tests du protocole x402 (5 endpoints)
+## x402 protocol tests (5 endpoints)
 
-Exécutés le 23/11 au matin, avant l'ouverture de la vitrine :
+Run on the morning of 23/11, before the storefront went live:
 
-- `/catalog` sans paiement → 200, 5 produits lus on-chain
-- `/product/1` sans `X-PAYMENT` → **402** avec `accepts[]` conforme (schéma `exact`, réseau
-  `eip155:44005`, `payTo` = marchand dédié, `asset` = tUSD8, `extra.name/version` renseignés)
-- `/product/1` avec autorisation EIP-3009 valide → **200**, contenu livré, reçu dans
-  `X-PAYMENT-RESPONSE`
-- Autorisation rejouée → **402** (garde anti-replay sur `settledTx`)
-- `/product/8` (inexistant) → **404**
+- `/catalog` without payment → 200, five products read straight from the contract
+- `/product/1` without `X-PAYMENT` → **402** with a compliant `accepts[]` (scheme `exact`,
+  network `eip155:44005`, `payTo` = dedicated merchant, `asset` = tUSD8, `extra.name` and
+  `extra.version` set)
+- `/product/1` with a valid EIP-3009 authorization → **200**, content delivered, receipt
+  returned in `X-PAYMENT-RESPONSE`
+- Same authorization replayed → **402** (replay guard on `settledTx`)
+- `/product/8` (non-existent) → **404**
 
-Transaction de référence du chemin agent :
-`0x78a98adeff19330e8a7cf812ea40a4d2c63e8f351ad817b6af2a87a1ec581dc3` (bloc 3897794,
-payeur `0xb141B75A864B399d56c68Fd798e4061625B679C9`).
+Reference transaction for the agent path:
+`0x78a98adeff19330e8a7cf812ea40a4d2c63e8f351ad817b6af2a87a1ec581dc3` (block 3897794,
+payer `0xb141B75A864B399d56c68Fd798e4061625B679C9`).
 
-## Tests de la vitrine humaine (MetaMask)
+## Human storefront tests (MetaMask)
 
-La page `https://qday-catalog.xynaptic.io/` sert une boutique statique : les prix sont lus
-dans le contrat, le paiement passe par `approve` puis `PaymentRouter.pay(productId, txHash)`.
-Aucun backend, aucune clé côté serveur.
+`https://qday-catalog.xynaptic.io/` serves a static storefront: prices are read from the
+contract and payment goes through `approve` then `PaymentRouter.pay(productId, txHash)`.
+No backend, no server-side key.
 
-Quatre achats effectués le 23/11 vers 22h15 depuis le wallet
-`0x0d7616d4cf2310ccb3dcd5526e36d0649c94cdd3` :
+Four purchases on 23/11 around 22:15 from wallet
+`0x0d7616d4cf2310ccb3dcd5526e36d0649c94cdd3`:
 
-| Produit | Montant | Bloc | Transaction |
+| Product | Amount | Block | Transaction |
 |---|---|---|---|
-| #1 crypto-price | 0,01 tUSD8 | 3948151 | `0xc1e7bcea06b01d43def183a1a20eb328321c4503a961b662493758ae69c19617` |
-| #2 news-us | 0,01 tUSD8 | 3948350 | `0x82b58374d24a9270e5a3d8f5dcb5d4bdd09ac57e764fc07df65466ecf7c0f6e5` |
-| #4 intermodal-compare | 0,03 tUSD8 | 3948725 | `0x19a08566c481578d5c1c9aa642d3cb5aa868fb5f552cd73e70fb0facd5d135bf` |
-| #5 restaurant-nearby | 0,05 tUSD8 | 3948942 | `0x0487a41cced64454ac9fda1cce17a1bfe8edd9ffde7641f2b22c3e43ed7dc0f0` |
+| #1 crypto-price | 0.01 tUSD8 | 3948151 | `0xc1e7bcea06b01d43def183a1a20eb328321c4503a961b662493758ae69c19617` |
+| #2 news-us | 0.01 tUSD8 | 3948350 | `0x82b58374d24a9270e5a3d8f5dcb5d4bdd09ac57e764fc07df65466ecf7c0f6e5` |
+| #4 intermodal-compare | 0.03 tUSD8 | 3948725 | `0x19a08566c481578d5c1c9aa642d3cb5aa868fb5f552cd73e70fb0facd5d135bf` |
+| #5 restaurant-nearby | 0.05 tUSD8 | 3948942 | `0x0487a41cced64454ac9fda1cce17a1bfe8edd9ffde7641f2b22c3e43ed7dc0f0` |
 
-**Total réglé : 0,10 tUSD8.** Le produit #3 (security-price) n'a pas été acheté lors de
-cette session.
+**Total settled: 0.10 tUSD8.** Product #3 (security-price) was not purchased in this session.
 
-Soldes après les tests : PaymentRouter `0,11 tUSD8`, marchand
-`0xa044b8607AA7d37626Ae95025c830B02FeEDD3D3` `0,23 tUSD8`. Le router conserve l'encaisse
-jusqu'à un `withdraw` par l'owner — c'est son fonctionnement nominal, pas une anomalie.
+Balances after the tests: PaymentRouter `0.11 tUSD8`, merchant
+`0xa044b8607AA7d37626Ae95025c830B02FeEDD3D3` `0.23 tUSD8`. The router holds the proceeds
+until the owner calls `withdraw` — that is its documented behaviour, not a fault.
 
-## Notes d'exploitation
+## Operational notes
 
-Le RPC public `https://rpc-test.qday.info` impose deux contraintes qui font perdre du temps
-si on les découvre en route :
+The public RPC at `https://rpc-test.qday.info` enforces two constraints that cost time if
+you discover them the hard way:
 
-- **403 sans User-Agent de navigateur** — un `curl` nu ou un client Python par défaut est
-  refusé ; envoyer un `User-Agent` explicite.
-- **`eth_getLogs` plafonné à 1 000 blocs** — découper les scans, sinon l'appel échoue avec
-  `block range too large`.
+- **403 without a browser User-Agent** — a bare `curl` or a default Python client is
+  rejected; send an explicit `User-Agent`.
+- **`eth_getLogs` is capped at 1,000 blocks** — split your scans, otherwise the call fails
+  with `block range too large`.
 
-Pour retrouver les achats sans indexeur : filtrer les `Transfer` du token tUSD8
-(`0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef`) avec le router en
-troisième topic.
+To find purchases without an indexer: filter the tUSD8 `Transfer` events
+(`0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef`) with the router
+address in the third topic.
 
-## Reste à faire
+## Remaining work
 
-- Un achat complet par le **chemin x402** depuis la vitrine publique, pour que le
-  facilitateur dédié apparaisse aussi dans les traces d'un test de bout en bout.
-- Test de charge léger (rafale de 10 requêtes) pour documenter la latence de règlement.
+- A full purchase through the **x402 path** from the public storefront, so the dedicated
+  facilitator shows up in an end-to-end test as well.
+- A light load test (burst of 10 requests) to document settlement latency.

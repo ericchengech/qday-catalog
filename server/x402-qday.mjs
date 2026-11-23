@@ -1,13 +1,14 @@
 // x402 resource server — QDay Aevum (hackathon).
-// Sert le catalogue de la boutique et fait payer les agents via NOTRE facilitateur
-// (instance dediee testnet, jamais celle de production).
+// Serves the store catalogue and lets agents pay through OUR facilitator (a dedicated
+// testnet instance, never the production one).
 //
-//   GET /catalog            -> gratuit, liste des produits lus on-chain
-//   GET /product/:id        -> 402 avec les termes de paiement, puis 200 si regle
-//   GET /health             -> etat + reseau + marchand
+//   GET /                  -> static storefront (MetaMask payment)
+//   GET /catalog           -> free, products read straight from the contract
+//   GET /product/:id       -> 402 with payment terms, then 200 once settled
+//   GET /health            -> status + network + merchant
 //
-// Le paiement suit x402 : le client renvoie l'entete X-PAYMENT (JSON, brut ou base64)
-// contenant une autorisation EIP-3009 signee ; on la fait regler par le facilitateur.
+// Payment follows x402: the client sends back an X-PAYMENT header (JSON, raw or base64)
+// carrying a signed EIP-3009 authorization; the facilitator settles it.
 import { createServer } from "node:http";
 import { createPublicClient, http, getAddress, formatUnits } from "viem";
 
@@ -35,24 +36,24 @@ const ABI = [
   { name: "productCount", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
 ];
 
-async function chargerProduits() {
+async function loadProducts() {
   let n = 0n;
   try {
     n = await pub.readContract({ address: ROUTER, abi: ABI, functionName: "productCount" });
   } catch (_) {
     n = 0n;
   }
-  const produits = [];
-  const total = Number(n) > 0 ? Number(n) : 8; // repli : on tente les 8 premiers id
+  const productsList = [];
+  const total = Number(n) > 0 ? Number(n) : 8; // fallback: try the first 8 ids
   for (let id = 1; id <= total; id++) {
     try {
       const [price, active, name] = await pub.readContract({
         address: ROUTER, abi: ABI, functionName: "products", args: [BigInt(id)],
       });
-      if (active) produits.push({ id, name, price: price.toString(), price_display: formatUnits(price, 6) + " tUSD8" });
+      if (active) productsList.push({ id, name, price: price.toString(), price_display: formatUnits(price, 6) + " tUSD8" });
     } catch (_) { /* id inexistant */ }
   }
-  return produits;
+  return productsList;
 }
 
 const json = (res, code, corps, extra = {}) => {
@@ -61,7 +62,7 @@ const json = (res, code, corps, extra = {}) => {
   res.end(body);
 };
 
-function lirePaiement(req) {
+function readPayment(req) {
   const brut = req.headers["x-payment"] || req.headers["X-PAYMENT"];
   if (!brut) return null;
   const s = String(brut).trim();
@@ -73,7 +74,7 @@ function lirePaiement(req) {
   return null;
 }
 
-const serveur = createServer(async (req, res) => {
+const server = createServer(async (req, res) => {
   const url = new URL(req.url, BASE_URL);
   if (req.method === "OPTIONS") return json(res, 204, {});
 
@@ -81,12 +82,28 @@ const serveur = createServer(async (req, res) => {
     return json(res, 200, { ok: true, network: NETWORK, merchant: MERCHANT, token: TOKEN, router: ROUTER, facilitator: FACILITATOR });
   }
 
+  if (url.pathname === "/" || url.pathname === "/shop") {
+    // Human storefront: embedded static page, no server-side dependency.
+    try {
+      const fs = await import("node:fs/promises");
+      const html = await fs.readFile(new URL("../web/index.html", import.meta.url), "utf8");
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": Buffer.byteLength(html),
+        "Cache-Control": "public, max-age=300",
+      });
+      return res.end(html);
+    } catch (e) {
+      return json(res, 500, { error: "page unavailable: " + String(e.message || e).slice(0, 160) });
+    }
+  }
+
   if (url.pathname === "/catalog") {
     try {
-      const produits = await chargerProduits();
-      return json(res, 200, { service: "qday-aeuvm-catalog", network: NETWORK, merchant: MERCHANT, asset: TOKEN, count: produits.length, products: produits });
+      const productsList = await loadProducts();
+      return json(res, 200, { service: "qday-aeuvm-catalog", network: NETWORK, merchant: MERCHANT, asset: TOKEN, count: productsList.length, products: productsList });
     } catch (e) {
-      return json(res, 503, { error: "catalogue indisponible: " + String(e.message || e).slice(0, 160) });
+      return json(res, 503, { error: "catalog unavailable: " + String(e.message || e).slice(0, 160) });
     }
   }
 
@@ -94,21 +111,21 @@ const serveur = createServer(async (req, res) => {
   if (!m) return json(res, 404, { error: "not found", routes: ["/catalog", "/product/:id", "/health"] });
 
   const id = Number(m[1]);
-  let produit = null;
+  let productItem = null;
   try {
     const [price, active, name] = await pub.readContract({ address: ROUTER, abi: ABI, functionName: "products", args: [BigInt(id)] });
-    if (active) produit = { id, name, price: price.toString(), price_display: formatUnits(price, 6) + " tUSD8" };
+    if (active) productItem = { id, name, price: price.toString(), price_display: formatUnits(price, 6) + " tUSD8" };
   } catch (_) {}
-  if (!produit) return json(res, 404, { error: "produit inconnu ou inactif", id });
+  if (!productItem) return json(res, 404, { error: "unknown or inactive product", id });
 
   const resource = `${BASE_URL}/product/${id}`;
   const terms = {
     scheme: "exact",
     network: NETWORK,
-    amount: produit.price,
-    maxAmountRequired: produit.price,
+    amount: productItem.price,
+    maxAmountRequired: productItem.price,
     resource,
-    description: `QDay catalogue — ${produit.name}`,
+    description: `QDay catalogue — ${productItem.name}`,
     mimeType: "application/json",
     payTo: MERCHANT,
     maxTimeoutSeconds: 600,
@@ -116,7 +133,7 @@ const serveur = createServer(async (req, res) => {
     extra: { name: "tUSD8", version: "2" },
   };
 
-  const paiement = lirePaiement(req);
+  const paiement = readPayment(req);
   if (!paiement) {
     return json(res, 402, { x402Version: 2, error: "PAYMENT-REQUIRED", accepts: [terms] });
   }
@@ -128,27 +145,27 @@ const serveur = createServer(async (req, res) => {
       body: JSON.stringify({ paymentRequirements: terms, paymentPayload: paiement }),
       signal: AbortSignal.timeout(150000),
     });
-    const reglement = await r.json().catch(() => ({}));
-    if (!reglement || reglement.success !== true) {
+    const settlement = await r.json().catch(() => ({}));
+    if (!settlement || settlement.success !== true) {
       return json(res, 402, {
-        x402Version: 2, error: "PAIEMENT-REJETE",
-        raison: (reglement && reglement.errorReason) || "reglement refuse",
+        x402Version: 2, error: "PAYMENT-REJECTED",
+        reason: (settlement && settlement.errorReason) || "settlement refused",
         accepts: [terms],
       });
     }
-    const recu = Buffer.from(JSON.stringify({ success: true, network: NETWORK, transaction: reglement.transaction, payer: reglement.payer, settled_at: reglement.settled_at })).toString("base64");
+    const recu = Buffer.from(JSON.stringify({ success: true, network: NETWORK, transaction: settlement.transaction, payer: settlement.payer, settled_at: settlement.settled_at })).toString("base64");
     return json(res, 200, {
       service: "qday-aeuvm-catalog", network: NETWORK,
-      product: produit,
-      paid_by: reglement.payer, transaction: reglement.transaction, block: reglement.block,
-      deliverable: { note: "contenu livre apres reglement x402 (exemple)", product_id: id, licence: "usage interne, testnet" },
+      product: productItem,
+      paid_by: settlement.payer, transaction: settlement.transaction, block: settlement.block,
+      deliverable: { note: "content delivered after x402 settlement (sample)", product_id: id, license: "internal use, testnet only" },
     }, { "X-PAYMENT-RESPONSE": recu });
   } catch (e) {
-    return json(res, 502, { error: "facilitateur injoignable: " + String(e.message || e).slice(0, 160) });
+    return json(res, 502, { error: "facilitator unreachable: " + String(e.message || e).slice(0, 160) });
   }
 });
 
-serveur.listen(PORT, () => {
-  console.log(`x402 QDay a l ecoute sur ${PORT} — reseau ${NETWORK} — marchand ${MERCHANT}`);
-  console.log(`facilitateur : ${FACILITATOR}`);
+server.listen(PORT, () => {
+  console.log(`x402 QDay listening on ${PORT} — network ${NETWORK} — merchant ${MERCHANT}`);
+  console.log(`facilitator: ${FACILITATOR}`);
 });

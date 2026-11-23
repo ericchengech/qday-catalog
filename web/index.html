@@ -102,34 +102,34 @@ async function buy(id){
 
     const price = (await router.products(id)).price;
     const bal = await token.balanceOf(acc);
-    if (bal < price) throw new Error("solde insuffisant : " + fmt(bal) + " pour un prix de " + fmt(price));
+    if (bal < price) throw new Error("insufficient tUSD8 balance: " + fmt(bal) + " for a price of " + fmt(price));
 
     let allowance = await token.allowance(acc, ROUTER);
     if (allowance < price){
-      say("Étape 1/2 — autorisation tUSD8 (" + fmt(price) + ")… ouvre MetaMask et confirme.");
+      say("Step 1/2 — tUSD8 approval (" + fmt(price) + ")… open MetaMask and confirm.");
       const a1 = await token.approve(ROUTER, price);
-      say("Autorisation envoyée " + a1.hash.slice(0,10) + "… attente de confirmation.");
+      say("Approval sent " + a1.hash.slice(0,10) + "… waiting for confirmation.");
       await waitTx(a1.hash, "approval");
       allowance = await token.allowance(acc, ROUTER);
-      if (allowance < price) throw new Error("autorisation non enregistrée, réessaie");
+      if (allowance < price) throw new Error("approval not recorded, please retry");
     } else {
-      say("Autorisation déjà en place — on passe au paiement.");
+      say("Approval already in place — moving on to payment.");
     }
 
-    say("Étape 2/2 — paiement produit #" + id + " (" + fmt(price) + ")… confirme dans MetaMask.");
+    say("Step 2/2 — paying for product #" + id + " (" + fmt(price) + ")… confirm in MetaMask.");
     const ctxHash = ethers.id("xynaptic-store:" + id + ":" + acc.toLowerCase() + ":" + Date.now());
     const tx = await router.pay(id, ctxHash);
-    say("Paiement envoyé " + tx.hash.slice(0,10) + "… attente de confirmation.");
+    say("Payment sent " + tx.hash.slice(0,10) + "… waiting for confirmation.");
     const rec = await waitTx(tx.hash, "payment");
     if (rec){
-      st.textContent = "✅ payé";
+      st.textContent = "✅ paid";
       st.className = "price ok";
-      say('Payé ! tx : <a href="https://explorer-test.qday.info/tx/' + tx.hash + '" target="_blank" rel="noreferrer">' + tx.hash.slice(0,18) + '…</a>', "ok");
+      say('Paid! tx: <a href="https://explorer-test.qday.info/tx/' + tx.hash + '" target="_blank" rel="noreferrer">' + tx.hash.slice(0,18) + '…</a>', "ok");
     }
   } catch(e){
     const msg = (e && (e.shortMessage || e.message)) || String(e);
-    if (/user rejected|ACTION_REJECTED|4001/i.test(msg)) say("Transaction annulée dans MetaMask.", "err");
-    else if (/insufficient funds/i.test(msg)) say("Pas assez de tQDAY pour le gas.", "err");
+    if (/user rejected|ACTION_REJECTED|4001/i.test(msg)) say("Transaction cancelled in MetaMask.", "err");
+    else if (/insufficient funds/i.test(msg)) say("Not enough tQDAY to pay for gas.", "err");
     else say(msg, "err");
   }
 }
