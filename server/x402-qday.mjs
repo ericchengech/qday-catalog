@@ -74,6 +74,93 @@ function readPayment(req) {
   return null;
 }
 
+// --- demo agent purchase (single-click x402 flow, testnet only) ---
+// POST /demo/purchase/:id replays, server-side, what an x402 agent does:
+//   1. GET  /product/:id             -> 402 + payment requirements
+//   2. sign an EIP-3009 TransferWithAuthorization (demo buyer key)
+//   3. POST facilitator /verify      -> signature + nonce checks
+//   4. POST facilitator /settle      -> on-chain transferWithAuthorization
+//   5. GET  /product/:id + X-PAYMENT -> 200 + deliverable
+// Enabled only when QDAY_DEMO_BUYER_KEY is set (a throwaway TESTNET key).
+const DEMO_BUYER = (process.env.QDAY_DEMO_BUYER_KEY || "").trim();
+const DEMO_MAX_AMOUNT = BigInt(process.env.QDAY_DEMO_MAX_AMOUNT || "1000000"); // <= 1 tUSD8
+const demoLastHit = new Map();
+let demoBuyer = null;
+if (DEMO_BUYER) {
+  try { const { privateKeyToAccount } = await import("viem/accounts"); demoBuyer = privateKeyToAccount(DEMO_BUYER); }
+  catch (e) { console.error("demo buyer key invalid:", String(e.message || e).slice(0, 120)); }
+}
+
+const demoTypes = { TransferWithAuthorization: [
+  { name: "from", type: "address" }, { name: "to", type: "address" }, { name: "value", type: "uint256" },
+  { name: "validAfter", type: "uint256" }, { name: "validBefore", type: "uint256" }, { name: "nonce", type: "bytes32" }] };
+
+async function demoPurchase(id, ip) {
+  const now = Date.now();
+  const key = ip + ":" + id;
+  if (now - (demoLastHit.get(key) || 0) < 15000) return { code: 429, body: { error: "rate limited: one simulated purchase per product every 15 s" } };
+  demoLastHit.set(key, now);
+  if (!demoBuyer) return { code: 503, body: { error: "demo purchases disabled (no QDAY_DEMO_BUYER_KEY configured)" } };
+  const steps = [];
+  const step = (name, status, detail) => { steps.push({ step: steps.length + 1, name, status, detail }); };
+
+  // 1) 402 with payment requirements
+  const resource = `${BASE_URL}/product/${id}`;
+  const [price, active, name] = await pub.readContract({ address: ROUTER, abi: ABI, functionName: "products", args: [BigInt(id)] });
+  const priceS = price.toString();
+  if (!active) return { code: 404, body: { error: "unknown or inactive product", id } };
+  const amount = BigInt(priceS);
+  if (amount > DEMO_MAX_AMOUNT) return { code: 400, body: { error: "product price above demo cap", cap: DEMO_MAX_AMOUNT.toString() } };
+  const terms = {
+    scheme: "exact", network: NETWORK, amount: priceS, maxAmountRequired: priceS, resource,
+    description: `QDay catalogue - ${name}`, mimeType: "application/json", payTo: MERCHANT,
+    maxTimeoutSeconds: 600, asset: TOKEN, extra: { name: "tUSD8", version: "2" },
+  };
+  step("Discover price (GET /product/:id)", "ok", { status: 402, amount: priceS, payTo: MERCHANT, asset: TOKEN });
+
+  // 2) sign EIP-3009 authorization
+  const { randomBytes } = await import("node:crypto");
+  const validBefore = BigInt(Math.floor(now / 1000) + 600);
+  const nonce = "0x" + randomBytes(32).toString("hex");
+  const auth = { from: demoBuyer.address, to: MERCHANT, value: amount, validAfter: 0n, validBefore, nonce };
+  const signature = await demoBuyer.signTypedData({
+    domain: { name: "tUSD8", version: "2", chainId: 44005, verifyingContract: TOKEN },
+    types: demoTypes, primaryType: "TransferWithAuthorization", message: auth,
+  });
+  step("Sign EIP-3009 authorization", "ok", { signer: demoBuyer.address, value: priceS, validBefore: validBefore.toString() });
+
+  const payload = {
+    x402Version: 2, scheme: "exact", network: NETWORK,
+    payload: { signature, authorization: { from: auth.from, to: auth.to, value: priceS, validAfter: "0", validBefore: validBefore.toString(), nonce } },
+  };
+  const envelope = { x402Version: 2, paymentPayload: payload, paymentRequirements: terms };
+
+  // 3) verify
+  let v;
+  try {
+    v = await fetch(FACILITATOR + "/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(envelope), signal: AbortSignal.timeout(60000) }).then(r => r.json());
+  } catch (e) { return { code: 502, body: { error: "facilitator unreachable", steps } }; }
+  step("Facilitator /verify", v.isValid ? "ok" : "failed", { isValid: !!v.isValid, invalidReason: v.invalidReason || null });
+  if (!v.isValid) return { code: 402, body: { error: "PAYMENT-REJECTED", reason: v.invalidReason, steps } };
+
+  // 4) paid request: the resource server settles through the facilitator on delivery
+  const xpay = Buffer.from(JSON.stringify(payload)).toString("base64");
+  let paid, paidBody;
+  try {
+    paid = await fetch(resource, { headers: { "X-PAYMENT": xpay }, signal: AbortSignal.timeout(60000) });
+    paidBody = await paid.json().catch(() => ({}));
+  } catch (e) { return { code: 502, body: { error: "resource unreachable", steps } }; }
+  step("Deliver via X-PAYMENT (settle on request)", paid.status === 200 ? "ok" : "failed", {
+    status: paid.status, deliverable: paidBody.deliverable ?? null,
+    transaction: paidBody.transaction ?? null, reason: paidBody.reason ?? null,
+  });
+  return { code: paid.status === 200 ? 200 : paid.status, body: {
+    service: "qday-aeuvm-catalog", mode: "simulated-agent-purchase", network: NETWORK,
+    product: { id, name, price: priceS }, payer: paidBody.paid_by ?? null, transaction: paidBody.transaction ?? null,
+    steps, deliverable: paidBody.deliverable ?? null,
+  } };
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, BASE_URL);
   if (req.method === "OPTIONS") return json(res, 204, {});
@@ -107,6 +194,12 @@ const server = createServer(async (req, res) => {
     }
   }
 
+  const dm = url.pathname.match(/^\/demo\/purchase\/(\d+)$/);
+  if (dm && req.method === "POST") {
+    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").split(",")[0].trim();
+    try { const r = await demoPurchase(Number(dm[1]), ip); return json(res, r.code, r.body); }
+    catch (e) { return json(res, 500, { error: String(e.message || e).slice(0, 160) }); }
+  }
   const m = url.pathname.match(/^\/product\/(\d+)$/);
   if (!m) return json(res, 404, { error: "not found", routes: ["/catalog", "/product/:id", "/health"] });
 

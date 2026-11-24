@@ -55,11 +55,12 @@ async function loadProducts(){
       const [price, active, name] = await routerRead.products(id);
       if (!active) continue;
       html += '<div class="card"><div><div class="name">' + name + '</div><div class="sub">product #' + id + '</div></div>'
-            + '<div><span class="price">' + fmt(price) + '</span> <button class="buy" data-id="' + id + '">Buy</button> <span class="st" id="st' + id + '"></span></div></div>';
+            + '<div><span class="price">' + fmt(price) + '</span> <button class="buy" data-id="' + id + '">Buy</button> <button class="ghost demo" data-id="' + id + '" title="Runs a real x402 flow with the demo agent key (testnet)">Simulate an agent purchase</button> <span class="st" id="st' + id + '"></span></div></div>';
     } catch(e){ console.warn(id, e); }
   }
   box.innerHTML = html || "<p>No products found.</p>";
   box.querySelectorAll(".buy").forEach(b => b.addEventListener("click", () => buy(+b.dataset.id)));
+  box.querySelectorAll(".demo").forEach(b => b.addEventListener("click", () => demoBuy(+b.dataset.id)));
 }
 async function ensureAevum(mm){
   if (!mm) mm = getEth();
@@ -133,6 +134,24 @@ async function buy(id){
     else say(msg, "err");
   }
 }
+async function demoBuy(id){
+  const st = document.getElementById("st" + id);
+  const status = document.getElementById("status");
+  const say = (html, cls) => { status.innerHTML = '<span class="' + (cls||"") + '">' + html + '</span>'; };
+  try {
+    say("Simulating an x402 agent purchase for product #" + id + " — steps 1-5 running…");
+    const r = await fetch("/demo/purchase/" + id, { method: "POST" });
+    const d = await r.json();
+    if (!d.steps) throw new Error(d.error || "purchase failed");
+    const lines = d.steps.map(x => "<div>" + (x.status === "ok" ? "✅" : "❌") + " <code>" + x.name + "</code></div>").join("");
+    const tx = d.transaction ? ' <a href="https://explorer-test.qday.info/tx/' + d.transaction + '" target="_blank" rel="noreferrer">' + d.transaction.slice(0,18) + "…</a>" : "";
+    say("<b>Simulated agent purchase — product #" + id + "</b>" + tx + lines, r.ok ? "ok" : "err");
+    if (r.ok){ st.textContent = "✅ paid (agent)"; st.className = "price ok"; }
+  } catch(e){
+    say("Simulation failed: " + ((e && e.message) || e), "err");
+  }
+}
+
 function getProviders(){
   const ps = window.ethereum && window.ethereum.providers ? window.ethereum.providers : (window.ethereum ? [window.ethereum] : []);
   return ps.length ? ps : (window.ethereum ? [window.ethereum] : []);
