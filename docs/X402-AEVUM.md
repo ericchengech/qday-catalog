@@ -16,10 +16,10 @@ own facilitator: it verifies the EIP-712 signature, checks the nonce and the amo
 then a relay key pays the gas and calls `transferWithAuthorization` on the token. Funds
 move payer -> merchant directly; the relay never holds them.
 
-The same code serves Base, Polygon, Arbitrum One, Robinhood Chain (USDG) and Solana in
-production at https://facilitator.xynaptic.io. Aevum (chain 44005) is enabled only when
-`QDAY_TESTNET=1`, so the testnet network can never appear in the production `/supported`
-list.
+This submission runs on Aevum (chain 44005) only. The instance serving it is restricted to
+that network: `/supported` advertises `eip155:44005` and nothing else, and any request for
+another network is answered with `network not served`. The restriction comes from
+configuration (`NETWORKS_ALLOW`), not from a forked copy of the code.
 
 ## Aevum specifics, verified on-chain
 
