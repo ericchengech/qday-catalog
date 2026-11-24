@@ -250,7 +250,7 @@ address in the third topic.
 
 ## Simulated agent purchase (storefront demo)
 
-The storefront (`web/index.html`) exposes a per-product **Simulate agent buy** button.
+The agent interface page (`/agents`, `web/agents.html`) exposes a per-product **Simulate agent buy** button. The human storefront at `/` stays wallet-only (MetaMask).
 It runs the full x402 agent flow server-side against the testnet facilitator, using a
 dedicated demo buyer key (`QDAY_DEMO_BUYER_KEY`, never a production key):
 
