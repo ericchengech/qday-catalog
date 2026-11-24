@@ -111,8 +111,14 @@ async function buy(id){
       const a1 = await token.approve(ROUTER, price);
       say("Approval sent " + a1.hash.slice(0,10) + "… waiting for confirmation.");
       await waitTx(a1.hash, "approval");
-      allowance = await token.allowance(acc, ROUTER);
-      if (allowance < price) throw new Error("approval not recorded, please retry");
+      // RPC nodes may serve a slightly lagged state right after confirmation - poll briefly.
+      allowance = 0n;
+      for (let i = 0; i < 10; i++) {
+        allowance = await token.allowance(acc, ROUTER);
+        if (allowance >= price) break;
+        await new Promise(r => setTimeout(r, 1000));
+      }
+      if (allowance < price) throw new Error("approval not recorded yet - please retry in a few seconds");
     } else {
       say("Approval already in place — moving on to payment.");
     }
