@@ -169,11 +169,12 @@ const server = createServer(async (req, res) => {
     return json(res, 200, { ok: true, network: NETWORK, merchant: MERCHANT, token: TOKEN, router: ROUTER, facilitator: FACILITATOR });
   }
 
-  if (url.pathname === "/" || url.pathname === "/shop") {
+  if (url.pathname === "/" || url.pathname === "/shop" || url.pathname === "/agents") {
     // Human storefront: embedded static page, no server-side dependency.
     try {
       const fs = await import("node:fs/promises");
-      const html = await fs.readFile(new URL("../web/index.html", import.meta.url), "utf8");
+      const page = url.pathname === "/agents" ? "agents.html" : "index.html";
+      const html = await fs.readFile(new URL("../web/" + page, import.meta.url), "utf8");
       res.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
         "Content-Length": Buffer.byteLength(html),
