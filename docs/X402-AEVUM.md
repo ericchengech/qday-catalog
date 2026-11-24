@@ -247,3 +247,23 @@ address in the third topic.
 - A full purchase through the **x402 path** from the public storefront, so the dedicated
   facilitator shows up in an end-to-end test as well.
 - A light load test (burst of 10 requests) to document settlement latency.
+
+## Simulated agent purchase (storefront demo)
+
+The storefront (`web/index.html`) exposes a per-product **Simulate agent buy** button.
+It runs the full x402 agent flow server-side against the testnet facilitator, using a
+dedicated demo buyer key (`QDAY_DEMO_BUYER_KEY`, never a production key):
+
+| Step | What happens |
+| --- | --- |
+| 1 | `GET /product/:id` returns 402 with payment terms |
+| 2 | Demo agent signs an EIP-3009 `TransferWithAuthorization` |
+| 3 | Facilitator `/verify` validates signature, balance and terms |
+| 4 | `GET /product/:id` with `X-PAYMENT` — the resource server settles through the facilitator and delivers content (HTTP 200) |
+
+`POST /demo/purchase/:id` returns the JSON trace of these steps (status per step,
+explorer-ready `transaction` hash, `deliverable`). Rate limit: one simulated purchase
+per product per IP every 15 s. Demo purchases are capped at 1 tUSD8
+(`QDAY_DEMO_MAX_AMOUNT`). Fund the demo buyer wallet with testnet tUSD8 to keep the
+demo running; an exhausted balance fails cleanly at step 3 (`insufficient token
+balance`).
