@@ -9,6 +9,7 @@
   body { font-family: system-ui, sans-serif; background:#0b1020; color:#e7ecf5; margin:0 auto; padding:2rem; max-width:820px; }
   h1 { font-size:1.5rem; } .sub { color:#8fa0bd; margin-bottom:2rem; }
   .card { background:#141b2e; border:1px solid #263352; border-radius:12px; padding:1rem 1.2rem; margin-bottom:1rem; display:flex; justify-content:space-between; align-items:center; gap:1rem; }
+  .card > div:last-child { display:flex; align-items:center; gap:.5rem; flex-wrap:nowrap; justify-content:flex-end; white-space:nowrap; }
   .name { font-weight:600; } .price { color:#6ee7a8; white-space:nowrap; }
   button { background:#2f6fed; color:#fff; border:none; border-radius:8px; padding:.55rem 1.1rem; cursor:pointer; font-size:.95rem; }
   button.ghost { background:transparent; border:1px solid #3a4560; }
@@ -55,7 +56,7 @@ async function loadProducts(){
       const [price, active, name] = await routerRead.products(id);
       if (!active) continue;
       html += '<div class="card"><div><div class="name">' + name + '</div><div class="sub">product #' + id + '</div></div>'
-            + '<div><span class="price">' + fmt(price) + '</span> <button class="buy" data-id="' + id + '">Buy</button> <button class="ghost demo" data-id="' + id + '" title="Runs a real x402 flow with the demo agent key (testnet)">Simulate an agent purchase</button> <span class="st" id="st' + id + '"></span></div></div>';
+            + '<div><span class="price">' + fmt(price) + '</span> <button class="buy" data-id="' + id + '">Buy</button> <button class="ghost demo" data-id="' + id + '" title="Runs a real x402 flow with the demo agent key (testnet)">Simulate agent buy</button> <span class="st" id="st' + id + '"></span></div></div>';
     } catch(e){ console.warn(id, e); }
   }
   box.innerHTML = html || "<p>No products found.</p>";
